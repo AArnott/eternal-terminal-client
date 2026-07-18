@@ -584,7 +584,7 @@ pub fn read_proto<R: Read, M: ProtoMessage>(r: &mut R) -> Result<M, anyhow::Erro
     let mut len_buf = [0u8; 8];
     r.read_exact(&mut len_buf)?;
     let len = i64::from_ne_bytes(len_buf);
-    if len < 0 || len > 128 * 1024 * 1024 {
+    if !(0..=128 * 1024 * 1024).contains(&len) {
         anyhow::bail!("invalid proto length: {len}");
     }
     if len == 0 {

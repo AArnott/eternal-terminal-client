@@ -45,10 +45,7 @@ pub fn run_session(
         reverse_tunnels: Vec::new(),
         environment_variables: Default::default(),
     };
-    if !conn.write_packet(Packet::new(
-        et_packet::INITIAL_PAYLOAD,
-        payload.encode(),
-    )) {
+    if !conn.write_packet(Packet::new(et_packet::INITIAL_PAYLOAD, payload.encode())) {
         anyhow::bail!("failed to send initial payload");
     }
 
@@ -58,10 +55,7 @@ pub fn run_session(
     while Instant::now() < deadline {
         if let Some(pkt) = conn.read_packet()? {
             if pkt.header() != et_packet::INITIAL_RESPONSE {
-                anyhow::bail!(
-                    "expected INITIAL_RESPONSE, got header {}",
-                    pkt.header()
-                );
+                anyhow::bail!("expected INITIAL_RESPONSE, got header {}", pkt.header());
             }
             let resp = InitialResponse::decode(pkt.payload())?;
             if let Some(err) = resp.error {
@@ -95,10 +89,7 @@ pub fn run_session(
         let tb = TerminalBuffer {
             buffer: Some(body.into_bytes()),
         };
-        conn.write_packet(Packet::new(
-            terminal_packet::TERMINAL_BUFFER,
-            tb.encode(),
-        ));
+        conn.write_packet(Packet::new(terminal_packet::TERMINAL_BUFFER, tb.encode()));
     }
 
     if console.is_none() {
@@ -118,10 +109,7 @@ pub fn run_session(
                     let tb = TerminalBuffer {
                         buffer: Some(bytes),
                     };
-                    conn.write_packet(Packet::new(
-                        terminal_packet::TERMINAL_BUFFER,
-                        tb.encode(),
-                    ));
+                    conn.write_packet(Packet::new(terminal_packet::TERMINAL_BUFFER, tb.encode()));
                     keepalive_deadline = Instant::now() + keepalive_duration;
                 }
                 Ok(None) => {}
@@ -134,10 +122,7 @@ pub fn run_session(
             let ti = console.terminal_info();
             if ti != last_ti {
                 last_ti = ti.clone();
-                conn.write_packet(Packet::new(
-                    terminal_packet::TERMINAL_INFO,
-                    ti.encode(),
-                ));
+                conn.write_packet(Packet::new(terminal_packet::TERMINAL_INFO, ti.encode()));
             }
         } else {
             std::thread::sleep(Duration::from_millis(10));
@@ -146,30 +131,27 @@ pub fn run_session(
         // Network input — drain whatever is available without blocking.
         if conn.has_socket() {
             let mut coalesced = Vec::new();
-            loop {
-                match conn.read_packet()? {
-                    Some(pkt) => match pkt.header() {
-                        terminal_packet::TERMINAL_BUFFER => {
-                            if console.is_some() {
-                                let tb = TerminalBuffer::decode(pkt.payload())?;
-                                if let Some(buf) = tb.buffer {
-                                    coalesced.extend_from_slice(&buf);
-                                }
-                                keepalive_deadline = Instant::now() + keepalive_duration;
+            while let Some(pkt) = conn.read_packet()? {
+                match pkt.header() {
+                    terminal_packet::TERMINAL_BUFFER => {
+                        if console.is_some() {
+                            let tb = TerminalBuffer::decode(pkt.payload())?;
+                            if let Some(buf) = tb.buffer {
+                                coalesced.extend_from_slice(&buf);
                             }
+                            keepalive_deadline = Instant::now() + keepalive_duration;
                         }
-                        terminal_packet::KEEP_ALIVE => {
-                            waiting_on_keepalive = false;
-                            log::debug!("got keepalive");
-                        }
-                        h if h == et_packet::HEARTBEAT => {
-                            // legacy
-                        }
-                        h => {
-                            log::warn!("unknown packet type: {h}");
-                        }
-                    },
-                    None => break,
+                    }
+                    terminal_packet::KEEP_ALIVE => {
+                        waiting_on_keepalive = false;
+                        log::debug!("got keepalive");
+                    }
+                    h if h == et_packet::HEARTBEAT => {
+                        // legacy
+                    }
+                    h => {
+                        log::warn!("unknown packet type: {h}");
+                    }
                 }
             }
             if let Some(ref console) = console {

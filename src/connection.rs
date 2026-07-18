@@ -9,9 +9,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 
 use crate::backed::{BackedReader, BackedWriter, WriteState};
-use crate::crypto::{
-    CryptoHandler, CLIENT_SERVER_NONCE_MSB, SERVER_CLIENT_NONCE_MSB,
-};
+use crate::crypto::{CryptoHandler, CLIENT_SERVER_NONCE_MSB, SERVER_CLIENT_NONCE_MSB};
 use crate::packet::Packet;
 use crate::proto::{
     self, CatchupBuffer, ConnectRequest, ConnectResponse, ConnectStatus, SequenceHeader,
@@ -97,10 +95,14 @@ impl ClientConnection {
         let _ = read_half.set_read_timeout(None);
         let _ = write_half.set_write_timeout(None);
 
-        let reader_crypto =
-            Arc::new(CryptoHandler::new(&self.shared.key, SERVER_CLIENT_NONCE_MSB)?);
-        let writer_crypto =
-            Arc::new(CryptoHandler::new(&self.shared.key, CLIENT_SERVER_NONCE_MSB)?);
+        let reader_crypto = Arc::new(CryptoHandler::new(
+            &self.shared.key,
+            SERVER_CLIENT_NONCE_MSB,
+        )?);
+        let writer_crypto = Arc::new(CryptoHandler::new(
+            &self.shared.key,
+            CLIENT_SERVER_NONCE_MSB,
+        )?);
 
         *self.shared.reader.lock() = Some(BackedReader::new(reader_crypto, read_half));
         *self.shared.writer.lock() = Some(BackedWriter::new(writer_crypto, write_half));
@@ -289,8 +291,9 @@ fn try_recover(shared: &Shared) -> anyhow::Result<bool> {
             None => Vec::new(),
         }
     };
-    let mut cb = CatchupBuffer::default();
-    cb.buffer = catchup_out;
+    let cb = CatchupBuffer {
+        buffer: catchup_out,
+    };
     proto::write_proto(&mut write_half, &cb)?;
 
     let catchup_in: CatchupBuffer = proto::read_proto(&mut read_half)?;
@@ -335,4 +338,3 @@ fn tcp_connect(host: &str, port: u16) -> anyhow::Result<TcpStream> {
 pub fn ping_server(host: &str, port: u16) -> bool {
     tcp_connect(host, port).is_ok()
 }
-

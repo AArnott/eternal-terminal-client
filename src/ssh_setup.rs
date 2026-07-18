@@ -48,10 +48,7 @@ pub fn setup_ssh(opts: &SshSetupOptions) -> anyhow::Result<SessionKeys> {
     let mut passkey = gen_random_alphanum(32);
 
     let term = client_term();
-    let etterminal = opts
-        .etterminal_path
-        .as_deref()
-        .unwrap_or("etterminal");
+    let etterminal = opts.etterminal_path.as_deref().unwrap_or("etterminal");
 
     let mut cmdoptions = format!("--verbose={}", opts.verbose);
     if let Some(ref fifo) = opts.server_fifo {
@@ -154,9 +151,7 @@ fn run_ssh_interactive(args: &[String]) -> anyhow::Result<String> {
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|e| {
-            anyhow::anyhow!(
-                "failed to spawn ssh: {e}. Is OpenSSH installed and on PATH?"
-            )
+            anyhow::anyhow!("failed to spawn ssh: {e}. Is OpenSSH installed and on PATH?")
         })?;
 
     let mut stdout = String::new();
