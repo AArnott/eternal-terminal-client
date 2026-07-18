@@ -316,10 +316,12 @@ dependencies = [
  "ctrlc",
  "env_logger",
  "hex",
+ "libc",
  "log",
  "parking_lot",
  "rand",
  "thiserror",
+ "windows-sys 0.59.0",
  "xsalsa20poly1305",
 ]
 

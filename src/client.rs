@@ -83,9 +83,7 @@ pub fn run_session(
     let mut console = if opts.no_terminal {
         None
     } else {
-        let c = LocalConsole::new()?;
-        c.setup()?;
-        Some(c)
+        Some(LocalConsole::new()?)
     };
 
     if let Some(ref cmd) = opts.command {
