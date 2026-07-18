@@ -14,12 +14,10 @@ fn main() {
 #[cfg(windows)]
 fn embed_windows_version_info() {
     let version = std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
-    let description = std::env::var("CARGO_PKG_DESCRIPTION").unwrap_or_else(|_| {
-        "Eternal Terminal client — reconnectable remote shell".into()
-    });
-    let repository = std::env::var("CARGO_PKG_REPOSITORY").unwrap_or_else(|_| {
-        "https://github.com/AArnott/eternal-terminal-client".into()
-    });
+    let description = std::env::var("CARGO_PKG_DESCRIPTION")
+        .unwrap_or_else(|_| "Eternal Terminal client — reconnectable remote shell".into());
+    let repository = std::env::var("CARGO_PKG_REPOSITORY")
+        .unwrap_or_else(|_| "https://github.com/AArnott/eternal-terminal-client".into());
 
     // English (United States) — appears as "Language" in File Properties.
     const LANG_EN_US: u16 = 0x0409;

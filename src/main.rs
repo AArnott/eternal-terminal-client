@@ -157,14 +157,13 @@ fn real_main() -> anyhow::Result<()> {
         jumphost: cli.jumphost.clone(),
     })?;
 
-    log::info!("got session id={} (passkey len={})", keys.id, keys.passkey.len());
-
-    let conn = ClientConnection::new(
-        connect_host,
-        connect_port,
+    log::info!(
+        "got session id={} (passkey len={})",
         keys.id,
-        keys.passkey,
+        keys.passkey.len()
     );
+
+    let conn = ClientConnection::new(connect_host, connect_port, keys.id, keys.passkey);
 
     let mut attempts = 0;
     loop {
@@ -214,9 +213,8 @@ fn init_logging(verbose: u8) {
         _ => "trace",
     };
     // Prefer RUST_LOG if set.
-    let mut builder = env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or(level),
-    );
+    let mut builder =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level));
     builder.format_timestamp_secs();
     let _ = builder.try_init();
 }
