@@ -2,12 +2,15 @@
 name = "et"
 version = "0.1.0"
 edition = "2021"
-description = "Eternal Terminal client for Windows (also Linux and macOS)"
+description = "Eternal Terminal client — reconnectable remote shell"
 license = "MIT"
 readme = "README.md"
+authors = ["Andrew Arnott"]
 keywords = ["eternal-terminal", "et", "ssh", "remote", "terminal"]
 categories = ["command-line-utilities", "network-programming"]
 repository = "https://github.com/AArnott/eternal-terminal-client"
+homepage = "https://github.com/AArnott/eternal-terminal-client"
+build = "build.rs"
 
 [[bin]]
 name = "et"
@@ -34,6 +37,9 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
     "Win32_System_IO",
 ] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

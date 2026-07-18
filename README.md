@@ -22,6 +22,23 @@ Download the latest release from [GitHub Releases](https://github.com/AArnott/et
 
 Rename to `et` / `et.exe` and put it on your `PATH`.
 
+### Versioning
+
+**Single source of truth:** `[package].version` in `Cargo.toml`.
+
+That value is embedded in:
+
+- `et --version` (`CARGO_PKG_VERSION`)
+- Windows PE **File Properties → Details** (File version, Product version, description, copyright, language) via `build.rs` + `winresource`
+
+**Release checklist:**
+
+1. Bump `version` in `Cargo.toml` (and commit).
+2. Tag the same value with a `v` prefix: `git tag v0.2.0 && git push origin v0.2.0`
+3. The **Release** workflow **fails** if the tag does not match `Cargo.toml` (prevents shipping a binary whose File Properties say `0.1.0` under a `v0.2.0` tag).
+
+Do **not** retag over an old version; cut a new version instead so winget hashes and PE metadata stay immutable.
+
 ### Build from source
 
 ```powershell
