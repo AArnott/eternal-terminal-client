@@ -1,9 +1,11 @@
 name: Release
 
+# Only run for version tags (not ordinary branch pushes).
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
 
 permissions:
   contents: write
@@ -36,11 +38,11 @@ jobs:
           echo "git tag version : $EXPECTED"
           echo "Cargo.toml version: $CARGO_VER"
           if [[ "$EXPECTED" != "$CARGO_VER" ]]; then
-            echo "::error::Tag v$EXPECTED does not match Cargo.toml version $CARGO_VER"
-            echo "Bump [package].version in Cargo.toml, commit, then tag v\$version."
+            echo "::error::Tag v${EXPECTED} does not match Cargo.toml version ${CARGO_VER}"
+            echo "Bump [package].version in Cargo.toml, commit, then tag v${CARGO_VER}."
             exit 1
           fi
-          echo "version=$CARGO_VER" >> "$GITHUB_OUTPUT"
+          echo "version=${CARGO_VER}" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build (${{ matrix.name }})
@@ -105,62 +107,9 @@ jobs:
         if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: pwsh
         run: |
-          $exe = "target/${{ matrix.target }}/release/${{ matrix.binary }}"
-          $v = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path $exe))
-          $expected = "${{ needs.verify-version.outputs.version }}"
-          Write-Host "FileDescription : $($v.FileDescription)"
-          Write-Host "ProductName     : $($v.ProductName)"
-          Write-Host "ProductVersion  : $($v.ProductVersion)"
-          Write-Host "FileVersion     : $($v.FileVersion)"
-          Write-Host "LegalCopyright  : $($v.LegalCopyright)"
-          Write-Host "Language        : $($v.Language)"
-          Write-Host "Comments        : $($v.Comments)"
-          if (-not $v.FileDescription) { throw "FileDescription is empty" }
-          if (-not $v.ProductName) { throw "ProductName is empty" }
-          if ($v.ProductVersion -ne $expected) {
-            throw "ProductVersion '$($v.ProductVersion)' != Cargo/tag version '$expected'"
-          }
-          if ($v.FileVersion -notlike "$expected*") {
-            throw "FileVersion '$($v.FileVersion)' does not start with '$expected'"
-          }
-          if (-not $v.LegalCopyright) { throw "LegalCopyright is empty" }
-          $repo = "https://github.com/AArnott/eternal-terminal-client"
-          if ($v.Comments -ne $repo) {
-            throw "Comments (repo URL) expected '$repo', got '$($v.Comments)'"
-          }
-          # Custom StringFileInfo "Repository" via VerQueryValue
-          Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-public static class PeVer {
-  [DllImport("version.dll", SetLastError=true, CharSet=CharSet.Unicode)]
-  static extern bool GetFileVersionInfo(string f, int h, int s, byte[] d);
-  [DllImport("version.dll", SetLastError=true, CharSet=CharSet.Unicode)]
-  static extern int GetFileVersionInfoSize(string f, out int h);
-  [DllImport("version.dll", SetLastError=true, CharSet=CharSet.Unicode)]
-  static extern bool VerQueryValue(byte[] b, string sp, out IntPtr p, out uint l);
-  public static string GetString(string path, string name) {
-    int handle; int size = GetFileVersionInfoSize(path, out handle);
-    if (size <= 0) throw new Exception("GetFileVersionInfoSize failed");
-    byte[] buf = new byte[size];
-    if (!GetFileVersionInfo(path, 0, size, buf)) throw new Exception("GetFileVersionInfo failed");
-    IntPtr p; uint len;
-    // Try common en-US code pages used in VERSIONINFO blocks
-    string[] prefixes = { "\\StringFileInfo\\040904B0\\", "\\StringFileInfo\\040904E4\\" };
-    foreach (var pre in prefixes) {
-      if (VerQueryValue(buf, pre + name, out p, out len) && len > 1)
-        return Marshal.PtrToStringUni(p);
-    }
-    return null;
-  }
-}
-"@
-          $customRepo = [PeVer]::GetString((Resolve-Path $exe), "Repository")
-          Write-Host "Repository      : $customRepo"
-          if ($customRepo -ne $repo) {
-            throw "Custom property Repository expected '$repo', got '$customRepo'"
-          }
+          .\.github\scripts\verify-pe-version.ps1 `
+            -ExePath "target/${{ matrix.target }}/release/${{ matrix.binary }}" `
+            -ExpectedVersion "${{ needs.verify-version.outputs.version }}"
 
       - name: Stage artifact (Windows)
         if: runner.os == 'Windows'
