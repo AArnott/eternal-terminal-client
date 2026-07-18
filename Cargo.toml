@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 keywords = ["eternal-terminal", "et", "ssh", "remote", "terminal"]
 categories = ["command-line-utilities", "network-programming"]
-repository = "https://github.com/example/eternal-terminal-for-windows"
+repository = "https://github.com/AArnott/eternal-terminal-client"
 
 [[bin]]
 name = "et"
