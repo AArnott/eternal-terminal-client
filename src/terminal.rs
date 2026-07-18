@@ -5,6 +5,12 @@
 //! mouse, etc.) reach the remote app intact. Parsing keys via crossterm was
 //! stripping ESC from sequences like `\x1b[?61;…c`, so editors such as `fresh`
 //! inserted `[?61;…]` into the buffer as if it were typed text.
+//!
+//! On Windows, console input is polled carefully: mouse/focus/menu/key-up records
+//! are drained with `ReadConsoleInput` before any `ReadFile`. Otherwise
+//! `WaitForSingleObject` returns for those records while `ReadFile` blocks until
+//! a real key arrives, freezing the session loop so remote output (e.g. the shell
+//! prompt after exiting `fresh`) is not drawn until Enter.
 
 use std::io::{self, Write};
 use std::time::Duration;
@@ -76,16 +82,17 @@ impl Drop for LocalConsole {
 mod platform {
     use super::*;
     use std::ptr;
+    use std::time::Instant;
 
-    use windows_sys::Win32::Foundation::{
-        CloseHandle, GetLastError, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
-    };
+    use windows_sys::Win32::Foundation::{GetLastError, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows_sys::Win32::Storage::FileSystem::ReadFile;
     use windows_sys::Win32::System::Console::{
-        GetConsoleMode, GetConsoleScreenBufferInfo, GetStdHandle, SetConsoleMode,
-        CONSOLE_SCREEN_BUFFER_INFO, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT,
-        ENABLE_PROCESSED_OUTPUT, ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
-        ENABLE_WRAP_AT_EOL_OUTPUT, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        GetConsoleMode, GetConsoleScreenBufferInfo, GetStdHandle, PeekConsoleInputW,
+        ReadConsoleInputW, SetConsoleMode, CONSOLE_SCREEN_BUFFER_INFO, ENABLE_ECHO_INPUT,
+        ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, ENABLE_PROCESSED_OUTPUT,
+        ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+        ENABLE_WRAP_AT_EOL_OUTPUT, FOCUS_EVENT, INPUT_RECORD, KEY_EVENT, MENU_EVENT, MOUSE_EVENT,
+        STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, WINDOW_BUFFER_SIZE_EVENT,
     };
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
@@ -178,49 +185,120 @@ mod platform {
         }
     }
 
-    pub(super) fn poll_stdin(timeout: Duration) -> anyhow::Result<Option<Vec<u8>>> {
-        unsafe {
-            let h_in = GetStdHandle(STD_INPUT_HANDLE);
-            let ms = timeout.as_millis().min(u32::MAX as u128) as u32;
-            let wait = WaitForSingleObject(h_in, ms);
-            if wait == WAIT_TIMEOUT {
-                return Ok(None);
+    /// True when the head of the console input queue is a key-down event.
+    ///
+    /// With `ENABLE_VIRTUAL_TERMINAL_INPUT`, key-downs (and host DA/CPR replies
+    /// injected as key events) are what `ReadFile` will convert into the VT
+    /// byte stream. Other record types keep the handle signaled without ever
+    /// unblocking `ReadFile`.
+    unsafe fn console_has_key_down(h_in: HANDLE) -> anyhow::Result<bool> {
+        let mut record: INPUT_RECORD = std::mem::zeroed();
+        let mut npeek = 0u32;
+        if PeekConsoleInputW(h_in, &mut record, 1, &mut npeek) == 0 {
+            anyhow::bail!("PeekConsoleInput failed: {}", GetLastError());
+        }
+        if npeek == 0 {
+            return Ok(false);
+        }
+        if record.EventType as u32 != KEY_EVENT {
+            return Ok(false);
+        }
+        Ok(record.Event.KeyEvent.bKeyDown != 0)
+    }
+
+    /// Discard console input records that signal the handle but never produce
+    /// VT bytes from `ReadFile` (mouse/focus/menu/resize/key-up).
+    ///
+    /// Full-screen remote apps such as `fresh` enable mouse tracking; after
+    /// they exit, moving the mouse still queues `MOUSE_EVENT` records. A naive
+    /// `WaitForSingleObject` + `ReadFile` then deadlocks: the wait returns,
+    /// `ReadFile` blocks until a key is pressed, and the ET session loop stops
+    /// draining remote output — so the shell prompt never appears until Enter
+    /// (which then often shows two prompts at once).
+    unsafe fn drain_non_vt_console_events(h_in: HANDLE) -> anyhow::Result<()> {
+        loop {
+            let mut record: INPUT_RECORD = std::mem::zeroed();
+            let mut npeek = 0u32;
+            if PeekConsoleInputW(h_in, &mut record, 1, &mut npeek) == 0 {
+                anyhow::bail!("PeekConsoleInput failed: {}", GetLastError());
             }
-            if wait != WAIT_OBJECT_0 {
-                return Ok(None);
+            if npeek == 0 {
+                return Ok(());
             }
 
-            // With ENABLE_VIRTUAL_TERMINAL_INPUT, ReadFile returns the VT byte
-            // stream (including host replies such as DA / CPR).
-            let mut buf = [0u8; 16 * 1024];
+            let event_type = record.EventType as u32;
+            let drain = match event_type {
+                MOUSE_EVENT | FOCUS_EVENT | MENU_EVENT | WINDOW_BUFFER_SIZE_EVENT => true,
+                KEY_EVENT => record.Event.KeyEvent.bKeyDown == 0,
+                _ => false,
+            };
+            if !drain {
+                return Ok(());
+            }
+
             let mut nread = 0u32;
-            let ok = ReadFile(
-                h_in,
-                buf.as_mut_ptr() as *mut _,
-                buf.len() as u32,
-                &mut nread,
-                ptr::null_mut(),
-            );
-            if ok == 0 {
-                let err = GetLastError();
-                // ERROR_OPERATION_ABORTED / no data edge cases
-                if err == 0 || err == 995 {
-                    return Ok(None);
-                }
-                anyhow::bail!("ReadFile(stdin) failed: {err}");
+            if ReadConsoleInputW(h_in, &mut record, 1, &mut nread) == 0 {
+                anyhow::bail!("ReadConsoleInput failed: {}", GetLastError());
             }
-            if nread == 0 {
-                return Ok(None);
-            }
-            Ok(Some(buf[..nread as usize].to_vec()))
         }
     }
 
-    // Silence unused import if CloseHandle not needed
-    #[allow(dead_code)]
-    fn _keep(h: HANDLE) {
+    unsafe fn read_console_vt_stream(h_in: HANDLE) -> anyhow::Result<Option<Vec<u8>>> {
+        // With ENABLE_VIRTUAL_TERMINAL_INPUT, ReadFile returns the VT byte
+        // stream (including host replies such as DA / CPR).
+        let mut buf = [0u8; 16 * 1024];
+        let mut nread = 0u32;
+        let ok = ReadFile(
+            h_in,
+            buf.as_mut_ptr() as *mut _,
+            buf.len() as u32,
+            &mut nread,
+            ptr::null_mut(),
+        );
+        if ok == 0 {
+            let err = GetLastError();
+            // ERROR_OPERATION_ABORTED / no data edge cases
+            if err == 0 || err == 995 {
+                return Ok(None);
+            }
+            anyhow::bail!("ReadFile(stdin) failed: {err}");
+        }
+        if nread == 0 {
+            return Ok(None);
+        }
+        Ok(Some(buf[..nread as usize].to_vec()))
+    }
+
+    pub(super) fn poll_stdin(timeout: Duration) -> anyhow::Result<Option<Vec<u8>>> {
         unsafe {
-            let _ = CloseHandle(h);
+            let h_in = GetStdHandle(STD_INPUT_HANDLE);
+            let deadline = Instant::now() + timeout;
+
+            loop {
+                // Never call blocking ReadFile while only mouse/focus/etc.
+                // records are queued — that freezes the whole session loop.
+                drain_non_vt_console_events(h_in)?;
+
+                if console_has_key_down(h_in)? {
+                    return read_console_vt_stream(h_in);
+                }
+
+                let now = Instant::now();
+                if now >= deadline {
+                    return Ok(None);
+                }
+                let remaining = deadline - now;
+                let ms = remaining.as_millis().min(u32::MAX as u128) as u32;
+                let wait = WaitForSingleObject(h_in, ms);
+                if wait == WAIT_TIMEOUT {
+                    return Ok(None);
+                }
+                if wait != WAIT_OBJECT_0 {
+                    return Ok(None);
+                }
+                // Signaled: loop to drain non-VT records and ReadFile only
+                // when a key-down (or host reply) is actually present.
+            }
         }
     }
 }

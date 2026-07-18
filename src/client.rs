@@ -102,33 +102,8 @@ pub fn run_session(
     let mut last_ti = TerminalInfo::default();
 
     while !conn.is_shutting_down() && !shutdown.load(Ordering::SeqCst) {
-        // Local input
-        if let Some(ref console) = console {
-            match console.poll_input(Duration::from_millis(5)) {
-                Ok(Some(bytes)) => {
-                    let tb = TerminalBuffer {
-                        buffer: Some(bytes),
-                    };
-                    conn.write_packet(Packet::new(terminal_packet::TERMINAL_BUFFER, tb.encode()));
-                    keepalive_deadline = Instant::now() + keepalive_duration;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    log::info!("console input error: {e}");
-                    break;
-                }
-            }
-
-            let ti = console.terminal_info();
-            if ti != last_ti {
-                last_ti = ti.clone();
-                conn.write_packet(Packet::new(terminal_packet::TERMINAL_INFO, ti.encode()));
-            }
-        } else {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
-        // Network input — drain whatever is available without blocking.
+        // Network first: drain remote output before waiting on local input so a
+        // stalled console read cannot leave the shell prompt sitting unread.
         if conn.has_socket() {
             let mut coalesced = Vec::new();
             while let Some(pkt) = conn.read_packet()? {
@@ -175,7 +150,34 @@ pub fn run_session(
             }
         } else {
             waiting_on_keepalive = false;
+        }
+
+        // Local input (timeout also paces the loop when idle).
+        if let Some(ref console) = console {
+            match console.poll_input(Duration::from_millis(5)) {
+                Ok(Some(bytes)) => {
+                    let tb = TerminalBuffer {
+                        buffer: Some(bytes),
+                    };
+                    conn.write_packet(Packet::new(terminal_packet::TERMINAL_BUFFER, tb.encode()));
+                    keepalive_deadline = Instant::now() + keepalive_duration;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    log::info!("console input error: {e}");
+                    break;
+                }
+            }
+
+            let ti = console.terminal_info();
+            if ti != last_ti {
+                last_ti = ti.clone();
+                conn.write_packet(Packet::new(terminal_packet::TERMINAL_INFO, ti.encode()));
+            }
+        } else if !conn.has_socket() {
             std::thread::sleep(Duration::from_millis(50));
+        } else {
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 
