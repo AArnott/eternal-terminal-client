@@ -1,6 +1,6 @@
 [package]
 name = "et"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Eternal Terminal client — reconnectable remote shell"
 license = "MIT"
