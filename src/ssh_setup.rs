@@ -3,17 +3,17 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use rand::Rng;
+use rand::RngExt;
 
 use crate::host::client_term;
 
 const ALPHANUM: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 fn gen_random_alphanum(len: usize) -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..len)
         .map(|_| {
-            let i = rng.gen_range(0..ALPHANUM.len());
+            let i = rng.random_range(0..ALPHANUM.len());
             ALPHANUM[i] as char
         })
         .collect()
